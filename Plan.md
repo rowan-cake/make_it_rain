@@ -6,35 +6,24 @@
    Use the 1D ice-growth model in section 2; check results against Figures 1–2.
 
 2. **Incorperate the Algo for how much cloud seeding is needed to detect it**
-   Use section 3.3, Eq. (32), to estimate the AgI concentration needed for a detectable radar signal.
+   To hard :(, going to skip.
 
 3. **Visulize the whole thing**
-   Create a 2D ASCII illustration of the model, inspired by [ascii.rest](https://ascii.rest/), showing ice growth, falling particles, and radar signal.
+   Create a 2D ASCII illustration inspired by [ascii.rest](https://ascii.rest/), showing ice growth, falling particles, melting, and ground arrivals.
 
+## Where we are
 
+`model.py` handles individual crystals, collections of crystals, and new ice from AgI deposition nucleation (Yang Eq. 1). Particles grow inside the cloud, fall below it, melt at 0°C, and stop at the ground.
 
-Check Point:
-**`model.py` now simulates one particle’s journey from inside a cloud to the ground.**
+Quick test: `.venv/bin/python quick_plot.py --cloud`
 
-It has three main pieces:
+## Website plan
 
-- **`Environment`** describes the ground, cloud base, cloud top, temperature profile, and humidity.
-- **`IceCrystal`** calculates an ice particle’s growth from water vapor and its falling speed.
-- **`RainDrop`** calculates the melted particle’s radius and falling speed.
+**First version: preset simulations, animated ASCII**
 
-The simulation connects them:
+- Tech Stack:
+   - **Python + TypeScript + HTML Canvas**, with **Vite**  
 
-1. **Inside the cloud:** RK45 updates mass and height together. As the crystal falls, it encounters different temperature and vapor pressure, which change its growth.
-2. **Below cloud base:** growth stops, mass stays constant, and it continues falling.
-3. **At 0°C:** it instantly becomes a liquid drop with the same mass.
-4. **At the ground:** we record whether it arrived as ice or liquid. It can also stop at the time limit or if it completely sublimates inside the cloud.
+### 1. Connect Python to the browser
 
-The output is a **trajectory containing time, height, mass, and phase**, ready for plotting or animation.
-
-Our assumptions are spherical particles, still air, fixed air density/viscosity, no riming, and simplified melting.
-
-**We have the individual-particle building block. We haven’t built a population of crystals, AgI seeding, or radar detection yet**
-
----
-- to run the cloud part now 
-`.venv/bin/python quick_plot.py --cloud` (12 ice crystals)
+- Keep the physics in Python. Add `export_simulations.py` to produce JSON for the website.
