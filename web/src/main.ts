@@ -1,4 +1,5 @@
 import './style.css';
+import { drawFairy, fairyDurationSeconds, fairyStage } from './fairy';
 import { sampleBurst, samplePopulation, type SeedingBurst, type SimulationData, type Trajectory } from './trajectory';
 
 // These are drawing settings, not inputs to the Python model yet.
@@ -64,11 +65,32 @@ let burstStartTimes: number[] = [];
 let simulationTime = 0;
 let playing = false;
 let previousFrame: number | null = null;
+let fairyStartTime: number | null = null;
+const fairyImage = new Image();
+let fairyImageReady = false;
+let fairyImageSettled = false;
+fairyImage.onload = () => {
+  fairyImageReady = fairyImageSettled = true;
+  updateSeedButton();
+};
+fairyImage.onerror = () => {
+  // Keep the physics button usable if the decorative image fails to load.
+  fairyImageSettled = true;
+  updateSeedButton();
+};
+fairyImage.src = `${import.meta.env.BASE_URL}images/angel.png`;
+
+function updateSeedButton() {
+  seed.disabled = !seedingBurst?.crystal_count || !fairyImageSettled || fairyStartTime !== null;
+  seed.textContent = fairyStartTime === null ? 'Make rainwater abundant' :
+    playing ? fairyStage((simulationTime - fairyStartTime) / playbackSpeed) : 'Angel paused';
+}
 
 function setPlaying(value: boolean) {
   playing = value;
   previousFrame = null;
   toggle.textContent = playing ? 'Pause' : 'Play';
+  updateSeedButton();
 }
 
 function drawCloud(left: number, top: number, width: number, height: number, fontFamily: string) {
@@ -108,7 +130,8 @@ function drawScene() {
   ctx.clearRect(0, 0, width, height);
 
   const axisX = 64;
-  const axisTop = 32;
+  // Add sky above the original plot so the angel fits without shrinking the cloud.
+  const axisTop = 32 + parseFloat(getComputedStyle(canvas).getPropertyValue('--sky-height'));
   const axisBottom = height - 64; // room for the horizontal-axis ticks and label
   // Both the axis and the cloud use the same altitude-to-screen mapping.
   const heightToY = (metres: number) =>
@@ -206,6 +229,14 @@ function drawScene() {
       (waiting ? ` · ${waiting} waiting` : '');
     if (status.textContent !== state) status.textContent = state;
   }
+
+  if (fairyStartTime !== null && fairyImageReady) {
+    drawFairy(ctx, fairyImage, (simulationTime - fairyStartTime) / playbackSpeed, {
+      width, cloudCenterX: cloudX + cloudWidth / 2, cloudTopY: art.top,
+      cloudWidth, cloudHeight, fontFamily,
+    });
+    updateSeedButton();
+  }
 }
 
 new ResizeObserver(drawScene).observe(canvas);
@@ -213,13 +244,19 @@ window.addEventListener('resize', drawScene);
 
 toggle.addEventListener('click', () => setPlaying(!playing));
 seed.addEventListener('click', () => {
-  if (!seedingBurst) return;
-  burstStartTimes.push(simulationTime);
+  if (!seedingBurst || fairyStartTime !== null) return;
+  if (!fairyImageReady || window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    burstStartTimes.push(simulationTime);
+  } else {
+    fairyStartTime = simulationTime;
+  }
+  updateSeedButton();
   drawScene();
 });
 restart.addEventListener('click', () => {
   simulationTime = 0;
   burstStartTimes = [];
+  fairyStartTime = null;
   toggle.disabled = false;
   setPlaying(true);
   drawScene();
@@ -231,6 +268,16 @@ function animate(timestamp: number) {
   if (playing && trajectories.length && !document.hidden) {
     if (previousFrame !== null) simulationTime += (timestamp - previousFrame) / 1000 * playbackSpeed;
     previousFrame = timestamp;
+    if (fairyStartTime !== null) {
+      const injectionTime = fairyStartTime + fairyDurationSeconds * playbackSpeed;
+      if (simulationTime >= injectionTime) {
+        // Record the exact completion time even if a frame was late. Clearing the
+        // pending animation guarantees one burst per completed flight.
+        burstStartTimes.push(injectionTime);
+        fairyStartTime = null;
+        updateSeedButton();
+      }
+    }
     drawScene();
   }
   requestAnimationFrame(animate);
@@ -266,7 +313,6 @@ async function loadSimulation() {
     scene.cloudBaseM = data.environment.cloud_base_height_m;
     scene.cloudTopM = data.environment.top_height_m;
     toggle.disabled = restart.disabled = false;
-    seed.disabled = seedingBurst.crystal_count === 0;
     setPlaying(!window.matchMedia('(prefers-reduced-motion: reduce)').matches);
     drawScene();
     requestAnimationFrame(animate);
