@@ -1,5 +1,5 @@
 import './style.css';
-import { samplePopulation, type SimulationData, type Trajectory } from './trajectory';
+import { sampleBurst, samplePopulation, type SeedingBurst, type SimulationData, type Trajectory } from './trajectory';
 
 // These are drawing settings, not inputs to the Python model yet.
 const scene = {
@@ -42,6 +42,9 @@ const restart = document.querySelector<HTMLButtonElement>('#restart')!;
 const readout = document.querySelector<HTMLOutputElement>('#readout')!;
 const status = document.querySelector<HTMLParagraphElement>('#status')!;
 const waterMass = document.querySelector<HTMLOutputElement>('#water-mass')!;
+const seed = document.querySelector<HTMLButtonElement>('#seed')!;
+const seedInfo = document.querySelector<HTMLParagraphElement>('#seed-info')!;
+const seededWater = document.querySelector<HTMLOutputElement>('#seeded-water')!;
 
 // 280 simulated seconds per real second; each crystal has its own journey time.
 const playbackSpeed = 280;
@@ -53,6 +56,10 @@ document.querySelector('#speed')!.textContent = `${playbackSpeed}× speed`;
 let trajectories: Trajectory[] = [];
 let particleStartTimes: number[] = [];
 let initialWaterMassKg = 0;
+let seedingBurst: SeedingBurst | null = null;
+// Each click stores one birth time and reuses the Python trajectories. No copy
+// of the physics or 450-minute warm-up is applied to these newly created crystals.
+let burstStartTimes: number[] = [];
 // This clock is elapsed time since opening/restarting, separate from model time.
 let simulationTime = 0;
 let playing = false;
@@ -154,11 +161,22 @@ function drawScene() {
   if (trajectories.length) {
     const modelTime = initialSimulationTime + simulationTime;
     const population = samplePopulation(trajectories, modelTime, particleStartTimes);
+    const seededParticles: typeof population.particles = [];
+    let seededMassKg = 0;
+    if (seedingBurst) {
+      for (const birthTime of burstStartTimes) {
+        const burst = sampleBurst(seedingBurst.particles, simulationTime - birthTime);
+        seededParticles.push(...burst.particles);
+        seededMassKg += burst.waterMassKg;
+      }
+    }
     // Exclude every arrival before the scene opened, including on Restart.
-    waterMass.textContent = `${((population.waterMassKg - initialWaterMassKg) * 1e9).toFixed(2)} µg`;
+    const totalMassKg = population.waterMassKg - initialWaterMassKg + seededMassKg;
+    waterMass.textContent = `${(totalMassKg * 1e9).toFixed(2)} µg`;
+    seededWater.textContent = `${(seededMassKg * 1e9).toFixed(2)} µg from seeded crystals`;
     let iceCount = 0;
     let liquidCount = 0;
-    for (const particle of population.particles) {
+    for (const particle of [...population.particles, ...seededParticles]) {
       if (particle.phase === 'gone') continue;
       if (particle.phase === 'ice') iceCount++;
       else liquidCount++;
@@ -177,12 +195,15 @@ function drawScene() {
       const x = left + particle.trajectory.display_x_fraction * (right - left);
       ctx.font = `16px ${fontFamily}`;
       ctx.textAlign = 'center';
-      ctx.fillStyle = particle.phase === 'ice' ? '#bcecff' : '#ffc58a';
+      ctx.fillStyle = particle.trajectory.origin === 'seeded' ? '#d8b4fe' :
+        particle.phase === 'ice' ? '#bcecff' : '#ffc58a';
       ctx.fillText(particle.phase === 'ice' ? '*' : 'o', x, heightToY(particle.height_m));
     }
     readout.textContent = `${(simulationTime / 60).toFixed(1)} min · ${iceCount + liquidCount} particles`;
     const waiting = particleStartTimes.filter(start => modelTime < start).length;
-    const state = `${iceCount} ice · ${liquidCount} liquid` + (waiting ? ` · ${waiting} waiting` : '');
+    const state = `${iceCount} ice · ${liquidCount} liquid` +
+      (seededParticles.length ? ` · ${seededParticles.length} seeded active` : '') +
+      (waiting ? ` · ${waiting} waiting` : '');
     if (status.textContent !== state) status.textContent = state;
   }
 }
@@ -191,8 +212,14 @@ new ResizeObserver(drawScene).observe(canvas);
 window.addEventListener('resize', drawScene);
 
 toggle.addEventListener('click', () => setPlaying(!playing));
+seed.addEventListener('click', () => {
+  if (!seedingBurst) return;
+  burstStartTimes.push(simulationTime);
+  drawScene();
+});
 restart.addEventListener('click', () => {
   simulationTime = 0;
+  burstStartTimes = [];
   toggle.disabled = false;
   setPlaying(true);
   drawScene();
@@ -220,6 +247,17 @@ async function loadSimulation() {
       throw new Error('Unsupported or empty trajectory file.');
     }
     trajectories = data.particles;
+    if (!data.seeding_burst || data.seeding_burst.repeat !== false ||
+        data.seeding_burst.time_reference !== 'seconds_since_injection' ||
+        data.seeding_burst.crystal_count !== data.seeding_burst.particles.length) {
+      throw new Error('Missing or unsupported seeding burst. Regenerate the simulation export.');
+    }
+    seedingBurst = data.seeding_burst;
+    const injection = seedingBurst.injection;
+    seedInfo.textContent = `Each click: ${seedingBurst.crystal_count} new crystals at ` +
+      `${injection.heights_m.map(height => height.toLocaleString()).join(' / ')} m · ` +
+      `${injection.agi_concentration_per_m3 / 1e6} AgI/cm³ in ` +
+      `${injection.seeded_volume_m3 * 1000} L total, split equally`;
     particleStartTimes = trajectories.map((_, index) =>
       index < firstBatchSize ? 0 : secondBatchDelaySeconds * playbackSpeed);
     initialWaterMassKg = samplePopulation(trajectories, initialSimulationTime, particleStartTimes).waterMassKg;
@@ -228,6 +266,7 @@ async function loadSimulation() {
     scene.cloudBaseM = data.environment.cloud_base_height_m;
     scene.cloudTopM = data.environment.top_height_m;
     toggle.disabled = restart.disabled = false;
+    seed.disabled = seedingBurst.crystal_count === 0;
     setPlaying(!window.matchMedia('(prefers-reduced-motion: reduce)').matches);
     drawScene();
     requestAnimationFrame(animate);

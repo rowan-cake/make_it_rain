@@ -13,21 +13,24 @@
           <div class="playback">
             <button id="toggle" disabled>Play</button>
             <button id="restart" disabled>Restart</button>
+            <button id="seed" disabled>Make rainwater abundant</button>
             <span id="speed">280× speed</span>
           </div>
           <output id="readout" aria-live="off">— min · — particles</output>
           <p id="status" role="status">Loading crystals…</p>
+          <p id="seed-info" class="caption"></p>
         </div>
         <aside class="water-counter" aria-label="Accumulated liquid water at ground">
           <span>Water mass</span>
           <output id="water-mass" aria-live="off">0.00 µg</output>
           <small>At ground since start</small>
+          <output id="seeded-water" aria-live="off">0.00 µg from seeded crystals</output>
         </aside>
       </header>
-      <canvas id="cloud-scene" role="img" aria-label="Twenty particles begin partway through their staggered looping journeys, at the state reached at simulation minute 450. Ice is a blue asterisk; liquid is an orange o. The horizontal axis shows illustrative positions, not physical distances.">
+      <canvas id="cloud-scene" role="img" aria-label="Twenty background particles follow staggered looping journeys. The seeding button adds a one-time burst of purple particles. Asterisks indicate ice and circles indicate liquid. The horizontal axis shows illustrative positions, not physical distances.">
         Twenty particles follow Python-generated trajectories already in progress. Elapsed time and collected water mass start at zero.
       </canvas>
-      <p class="caption">* ice / o liquid · altitude in metres · particle size exaggerated</p>
+      <p class="caption">* ice / o liquid · purple: seeded · altitude in metres · particle size exaggerated</p>
     </main>
     <script type="module" src="/src/main.ts"></script>
   </body>

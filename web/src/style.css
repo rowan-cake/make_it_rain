@@ -40,6 +40,8 @@ canvas {
 .water-counter { margin-left: auto; text-align: right; }
 .water-counter span, .water-counter small { display: block; color: #91a39a; font-size: 12px; }
 .water-counter output { display: block; margin: 10px 0; color: #ffc58a; font-size: 24px; }
+.water-counter #seeded-water { color: #d8b4fe; font-size: 11px; }
+#seed { border-color: #a78bca; color: #d8b4fe; }
 
 .playback { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-bottom: 16px; }
 .playback span, output { font-size: 12px; font-variant-numeric: tabular-nums; }
@@ -59,4 +61,6 @@ button:disabled { opacity: 0.4; cursor: default; }
 
 @media (max-width: 600px) {
   main { padding: 32px 16px; }
+  /* Keep the full cloud altitude band inside its proportional artwork on phones. */
+  canvas { height: clamp(300px, 100vw, 600px); }
 }
