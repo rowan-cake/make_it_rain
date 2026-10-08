@@ -8,12 +8,26 @@
   </head>
   <body>
     <main>
-      <header>
+      <header class="dashboard">
+        <div>
+          <div class="playback">
+            <button id="toggle" disabled>Play</button>
+            <button id="restart" disabled>Restart</button>
+            <span id="speed">280× speed</span>
+          </div>
+          <output id="readout" aria-live="off">— min · — particles</output>
+          <p id="status" role="status">Loading crystals…</p>
+        </div>
+        <aside class="water-counter" aria-label="Accumulated liquid water at ground">
+          <span>Water mass</span>
+          <output id="water-mass" aria-live="off">0.00 µg</output>
+          <small>At ground since start</small>
+        </aside>
       </header>
-      <canvas id="cloud-scene" role="img" aria-label="A static ASCII cloud between 2000 and 3000 metres, with an altitude axis from 0 to 3000 metres on the left.">
-        A static ASCII cloud between 2000 and 3000 metres. The altitude axis extends from 0 to 3000 metres.
+      <canvas id="cloud-scene" role="img" aria-label="Twenty particles begin partway through their staggered looping journeys, at the state reached at simulation minute 450. Ice is a blue asterisk; liquid is an orange o. The horizontal axis shows illustrative positions, not physical distances.">
+        Twenty particles follow Python-generated trajectories already in progress. Elapsed time and collected water mass start at zero.
       </canvas>
-      <p class="caption">Static scene / altitude in metres</p>
+      <p class="caption">* ice / o liquid · altitude in metres · particle size exaggerated</p>
     </main>
     <script type="module" src="/src/main.ts"></script>
   </body>

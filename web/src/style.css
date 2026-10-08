@@ -36,6 +36,27 @@ canvas {
 
 .caption { font-size: 11px; }
 
+.dashboard { display: flex; justify-content: space-between; gap: 24px; flex-wrap: wrap; }
+.water-counter { margin-left: auto; text-align: right; }
+.water-counter span, .water-counter small { display: block; color: #91a39a; font-size: 12px; }
+.water-counter output { display: block; margin: 10px 0; color: #ffc58a; font-size: 24px; }
+
+.playback { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-bottom: 16px; }
+.playback span, output { font-size: 12px; font-variant-numeric: tabular-nums; }
+.playback span { color: #91a39a; }
+button {
+  font: inherit;
+  font-size: 12px;
+  color: #dbe5de;
+  background: transparent;
+  border: 1px solid #647e72;
+  border-radius: 4px;
+  padding: 8px 12px;
+  cursor: pointer;
+}
+button:hover:not(:disabled) { background: #24332e; }
+button:disabled { opacity: 0.4; cursor: default; }
+
 @media (max-width: 600px) {
   main { padding: 32px 16px; }
 }
