@@ -1,4 +1,4 @@
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from math import pi, exp, log, tanh, sqrt, isclose, isfinite
 import numpy as np
 from scipy.integrate import solve_ivp
@@ -42,6 +42,36 @@ def saturation_vapor_pressure_water_pa(temperature_k: float) -> float:
             + 0.014025 * T
         )
     )
+
+def deposition_nucleation_fraction(temperature_k: float, ice_saturation_ratio: float) -> float:
+    # Yang (2024), section 2.1, eq (1), based on Xue et al. (2013a)
+    # https://acp.copernicus.org/articles/24/13833/2024/acp-24-13833-2024.html#section2.1
+    # this is the fraction of AgI that nucleates ice, not an ice growth rate
+    if not isfinite(temperature_k) or temperature_k <= 0.0:
+        raise ValueError("Temperature must be positive and finite, in kelvin.")
+    if not isfinite(ice_saturation_ratio) or ice_saturation_ratio < 0.0:
+        raise ValueError("Ice saturation ratio must be nonnegative and finite.")
+    # the paper's strict conditions: colder than 268.2 K and S_i greater than 1.04
+    # zero here means no deposition nucleation in our model, not no possible nucleation
+    if temperature_k >= 268.2 or ice_saturation_ratio <= 1.04:
+        return 0.0
+
+    x = ice_saturation_ratio - 1.0
+    # 273.16 K and T_0 = 10 K are the reference and scale used in this fit
+    # keep 273.16 as published; our separate melting rule uses 273.15 K
+    y = (273.16 - temperature_k) / 10.0
+    # a, b, c, d, e are published empirical fit coefficients, not settings we tuned
+    fraction = (
+        -3.25e-3 * x
+        + 5.39e-5 * y
+        + 4.35e-2 * x**2
+        + 1.55e-4 * y**2
+        - 0.07 * x**3
+    )
+    if not 0.0 <= fraction <= 1.0:
+        raise ValueError("Nucleation fit returned a fraction outside [0, 1].")
+    return fraction
+
 
 @dataclass
 class IceCrystal:
@@ -287,6 +317,7 @@ class ParticleTrajectory:
     stop_reason: str
     cloud_exit_time_s: float | None = None
     melting_time_s: float | None = None
+    origin: str = "background"
 
 
 def simulate_to_ground(
@@ -391,6 +422,88 @@ def simulate_to_ground(
         else:
             break  # time limit; the clock is shared across all stages
     return result
+
+
+@dataclass
+class Cloud:
+    environment: Environment
+    crystals: list[IceCrystal]
+    seeded_crystals: list[IceCrystal] = field(default_factory=list)
+
+    def seed(
+        self,
+        height_m: float,
+        agi_concentration_per_m3: float,
+        seeded_volume_m3: float,
+    ) -> list[IceCrystal]:
+        # each call adds a fresh AgI burst at t = 0, before simulate()
+        # our simplification: apply deposition eq (1) once; no later activation of unused AgI
+        # Yang includes four nucleation modes and ongoing nucleation; we only use deposition
+        if not self.environment.cloud_base_height_m < height_m <= self.environment.top_height_m:
+            raise ValueError("Seed above the cloud base and inside the cloud.")
+        if not isfinite(agi_concentration_per_m3) or agi_concentration_per_m3 < 0.0:
+            raise ValueError("AgI concentration must be nonnegative and finite, in particles/m^3.")
+        if not isfinite(seeded_volume_m3) or seeded_volume_m3 <= 0.0:
+            raise ValueError("Seeded air volume must be positive and finite, in m^3.")
+
+        temperature = self.environment.temperature_k(height_m)
+        if not 123.0 < temperature < 332.0:  # range of the water saturation fit we use
+            raise ValueError("Seeding temperature must be within the vapor-pressure fit range.")
+        saturation_ratio = (
+            self.environment.vapor_pressure_pa(height_m)
+            / saturation_vapor_pressure_ice_pa(temperature)
+        )
+        fraction = deposition_nucleation_fraction(temperature, saturation_ratio)
+        expected_count = fraction * agi_concentration_per_m3 * seeded_volume_m3
+        if not isfinite(expected_count):
+            raise ValueError("Calculated ice count must be finite.")
+        # our discrete-particle choice: round to the nearest whole crystal
+        # Python round uses ties-to-even (e.g. 2.5 -> 2, 3.5 -> 4); no fractional weights
+        new_ice_count = round(expected_count)
+
+        # use the same starting sphere as our prototype: 4 micrometres and 910 kg/m^3
+        # 4 micrometres follows Yang's single-crystal example (section 3.1), not its size distribution
+        # 910 kg/m^3 = 0.91 g/cm^3, the paper's bulk density of solid ice
+        radius_m = 4e-6
+        mass_kg = 910.0 * (4.0 / 3.0) * pi * radius_m**3
+        # construct each object separately so each crystal can later have its own path
+        new_crystals = [
+            IceCrystal(height_m, mass_kg, radius_m, radius_m)
+            for _ in range(new_ice_count)
+        ]
+        self.seeded_crystals.extend(new_crystals)
+        return new_crystals  # empty if the rounded count is zero
+
+    def simulate(
+        self,
+        duration_s: float,
+        air_density_kg_m3: float = 1.0,
+        dynamic_viscosity_pa_s: float = 1.65e-5,
+        sample_interval_s: float = 10.0,
+    ) -> list[ParticleTrajectory]:
+        # our first cloud is a collection of ice crystals sharing the same environment
+        # every object is one crystal with its own trajectory
+        # all start at t = 0; results are background first, then seeded crystals in insertion order
+        # moisture is prescribed: no competition for vapor or collisions
+        if not isfinite(duration_s) or duration_s <= 0.0:
+            raise ValueError("Duration must be positive and finite.")
+        if not isfinite(sample_interval_s) or sample_interval_s <= 0.0:
+            raise ValueError("Sample interval must be positive and finite.")
+        trajectories = [
+            simulate_to_ground(
+                crystal, self.environment, duration_s,
+                air_density_kg_m3, dynamic_viscosity_pa_s, sample_interval_s,
+            )
+            for crystal in self.crystals
+        ]
+        for crystal in self.seeded_crystals:
+            trajectory = simulate_to_ground(
+                crystal, self.environment, duration_s,
+                air_density_kg_m3, dynamic_viscosity_pa_s, sample_interval_s,
+            )
+            trajectory.origin = "seeded"
+            trajectories.append(trajectory)
+        return trajectories
 
 
 if __name__ == "__main__":
@@ -525,3 +638,14 @@ if __name__ == "__main__":
         temperature_c = environment.temperature_k(height_m) - 273.15
         print(f"{time_s:7.1f} s: {height_m:8.2f} m, {mass_kg:.6e} kg, {temperature_c:.2f} C, {phase}")
     print("Stopped:", trajectory.stop_reason)
+
+    # seeding demo: 35 AgI particles/cm^3 in a 1-litre volume of air at our reference height
+    # 1 m^3 = 10^6 cm^3; 1 litre = 10^-3 m^3 (these are unit conversions)
+    cloud = Cloud(environment, [])
+    new_crystals = cloud.seed(height_m=3000.0, agi_concentration_per_m3=35.0 * 1e6, seeded_volume_m3=1e-3)
+    if new_crystals:
+        seeded_trajectories = cloud.simulate(7200.0)
+        print("\nOne-burst, deposition-only seeding example:")
+        print("New ice crystals in the seeded litre (rounded):", len(new_crystals))
+        print("Simulated trajectories:", len(seeded_trajectories))
+        print("Final total particle mass:", sum(t.mass_kg[-1] for t in seeded_trajectories), "kg")

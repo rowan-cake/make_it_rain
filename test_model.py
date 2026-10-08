@@ -1,11 +1,13 @@
 import unittest
+from unittest.mock import patch
 from dataclasses import replace
 from math import pi, sqrt
 
 import numpy as np
 
 from model import (
-    Environment, IceCrystal, RainDrop, simulate_crystal, simulate_to_ground,
+    Cloud, Environment, IceCrystal, RainDrop, simulate_crystal, simulate_to_ground,
+    deposition_nucleation_fraction,
     saturation_vapor_pressure_ice_pa, saturation_vapor_pressure_water_pa,
 )
 
@@ -109,6 +111,100 @@ class ParticleJourneyTests(unittest.TestCase):
             replace(self.env, ground_height_m=2500)
         with self.assertRaises(ValueError):
             simulate_to_ground(self.ice, replace(self.env, reference_temperature_k=280), 7200)
+
+    def test_collection_preserves_independent_particle_results_and_inputs(self):
+        crystals = [self.ice, replace(self.ice, height_m=2800)]
+        original = [replace(ice) for ice in crystals]
+        cloud = Cloud(self.env, crystals)
+        results = cloud.simulate(7200, sample_interval_s=60)
+        self.assertEqual(len(results), 2)
+        self.assertEqual(crystals, original)
+        for crystal, result in zip(crystals, results):
+            self.assertEqual(result, simulate_to_ground(crystal, self.env, 7200, sample_interval_s=60))
+        self.assertNotEqual(results[0].time_s[-1], results[1].time_s[-1])
+        self.assertEqual(Cloud(self.env, []).simulate(60), [])
+
+    def test_deposition_fraction_reference_and_strict_boundaries(self):
+        # Eq (1) at -15 C and water saturation using our vapor-pressure functions
+        fraction = deposition_nucleation_fraction(258.15, 1.1574174546356564)
+        self.assertAlmostEqual(fraction, 0.000723394294000074, places=15)
+        for temperature, ratio in ((268.2, 1.2), (270, 1.2), (258.15, 1.04), (258.15, 1.0)):
+            self.assertEqual(deposition_nucleation_fraction(temperature, ratio), 0.0)
+        self.assertGreater(deposition_nucleation_fraction(268.19, 1.05), 0.0)
+        # don't silently turn an unphysical fitted fraction into a population
+        with self.assertRaises(ValueError):
+            deposition_nucleation_fraction(258.15, 2.0)
+        with self.assertRaises(ValueError):
+            deposition_nucleation_fraction(float("nan"), 1.2)
+
+    def test_seeding_converts_concentration_and_preserves_background(self):
+        cloud = Cloud(self.env, [self.ice])
+        original = replace(self.ice)
+        # 35/cm^3 = 35 million/m^3; 1 litre = 0.001 m^3
+        crystals = cloud.seed(3000, 35e6, 1e-3)
+        self.assertEqual(len(crystals), 25)  # expected 25.3188..., rounded to nearest integer
+        self.assertEqual(len(cloud.seeded_crystals), 25)
+        self.assertEqual(len({id(crystal) for crystal in crystals}), 25)
+        self.assertEqual(cloud.crystals, [original])
+        for crystal in crystals:
+            self.assertEqual(crystal.a_m, 4e-6)
+            self.assertEqual(crystal.c_m, 4e-6)
+            self.assertEqual(crystal.height_m, 3000)
+        crystals[0].height_m = 2900
+        self.assertEqual(crystals[1].height_m, 3000)
+
+    def test_seeding_creates_separate_trajectories_without_changing_growth(self):
+        small = Cloud(self.env, [self.ice])
+        large = Cloud(self.env, [self.ice])
+        small.seed(3000, 35e6, 1e-3)
+        large.seed(3000, 70e6, 1e-3)
+        a, b = small.simulate(7200), large.simulate(7200)
+        # 25.3188 rounds to 25; doubling gives 50.6376, which rounds to 51
+        self.assertEqual(a[0], b[0])
+        self.assertEqual(len(a), 26)
+        self.assertEqual(len(b), 52)
+        self.assertEqual(len({id(t) for t in a}), 26)
+        self.assertEqual(len({id(t.mass_kg) for t in a}), 26)
+        self.assertEqual(a[1].origin, "seeded")
+        self.assertEqual(a[1].mass_kg, b[1].mass_kg)
+        self.assertEqual(a[1].height_m, b[1].height_m)
+        self.assertAlmostEqual(sum(t.mass_kg[-1] for t in a[1:]) / a[1].mass_kg[-1], 25)
+        # rerunning the cloud doesn't activate another batch of AgI
+        self.assertEqual(a, small.simulate(7200))
+        self.assertEqual(len(small.seeded_crystals), 25)
+
+    def test_zero_dose_and_inactive_conditions_add_no_crystals(self):
+        cases = ((self.env, 0), (replace(self.env, relative_humidity_water=0.5), 35e6),
+                 (replace(self.env, reference_temperature_k=270), 35e6))
+        for env, concentration in cases:
+            with self.subTest(concentration=concentration, env=env):
+                cloud = Cloud(env, [self.ice])
+                self.assertEqual(cloud.seed(3000, concentration, 1e-3), [])
+                self.assertEqual(cloud.seeded_crystals, [])
+                self.assertEqual(cloud.crystals, [self.ice])
+
+    def test_rounding_volume_scaling_and_fresh_bursts(self):
+        cloud = Cloud(self.env, [])
+        self.assertEqual(cloud.seed(3000, 35e6, 1e-6), [])
+        first = cloud.seed(3000, 35e6, 1e-3)
+        second = cloud.seed(3000, 35e6, 2e-3)
+        self.assertEqual(len(first), 25)
+        self.assertEqual(len(second), 51)
+        self.assertEqual(len(cloud.seeded_crystals), 76)
+        self.assertEqual(Cloud(self.env, []).seeded_crystals, [])
+        # isolate the count conversion to test exact half-integer ties
+        with patch("model.deposition_nucleation_fraction", return_value=0.5):
+            self.assertEqual(len(cloud.seed(3000, 5, 1)), 2)
+            self.assertEqual(len(cloud.seed(3000, 7, 1)), 4)
+
+    def test_invalid_seeding_inputs_leave_cloud_unchanged(self):
+        cloud = Cloud(self.env, [])
+        for height, concentration, volume in ((2000, 1, 1), (4500, 1, 1), (3000, -1, 1),
+                                               (3000, 1, 0), (3000, float("nan"), 1)):
+            with self.subTest(height=height, concentration=concentration, volume=volume):
+                with self.assertRaises(ValueError):
+                    cloud.seed(height, concentration, volume)
+                self.assertEqual(cloud.seeded_crystals, [])
 
 
 if __name__ == "__main__":

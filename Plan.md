@@ -34,3 +34,7 @@ The output is a **trajectory containing time, height, mass, and phase**, ready f
 Our assumptions are spherical particles, still air, fixed air density/viscosity, no riming, and simplified melting.
 
 **We have the individual-particle building block. We haven’t built a population of crystals, AgI seeding, or radar detection yet**
+
+---
+- to run the cloud part now 
+`.venv/bin/python quick_plot.py --cloud` (12 ice crystals)
