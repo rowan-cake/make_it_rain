@@ -1,5 +1,6 @@
 from dataclasses import dataclass, replace
 from math import pi, exp, log, tanh, sqrt, isclose, isfinite
+import numpy as np
 from scipy.integrate import solve_ivp
 
 
@@ -127,17 +128,57 @@ class IceCrystal:
         
 
 @dataclass
-class Environment:  # this is the enviroment where the cloud exsits in 
-    bottom_height_m: float  # always 0
+class RainDrop:
+    height_m: float
+    mass_kg: float
+
+    def radius_m(self) -> float:
+        if not isfinite(self.mass_kg) or self.mass_kg <= 0.0:
+            raise ValueError("A rain drop needs positive, finite mass.")
+        water_density_kg_m3 = 1000.0  # rounded liquid-water density, kg/m^3
+        return (3.0 * self.mass_kg / (4.0 * pi * water_density_kg_m3)) ** (1.0 / 3.0)
+
+    def terminal_velocity_m_s(self, air_density_kg_m3: float, dynamic_viscosity_pa_s: float) -> float:
+        # simple smooth-sphere approximation for a small liquid drop, not Yang's ice fit
+        # Heymsfield-Westbrook (2010), section 2a, eqs (3)-(5), p. 2471:
+        # https://doi.org/10.1175/2010JAS3379.1
+        # 9.06 and 0.292 are the reported sphere drag-fit constants
+        # this leaves out drop deformation and breakup
+        if any(not isfinite(v) or v <= 0.0 for v in (air_density_kg_m3, dynamic_viscosity_pa_s)):
+            raise ValueError("Air density and viscosity must be positive and finite.")
+        diameter_m = 2.0 * self.radius_m()
+        delta_0, c_0 = 9.06, 0.292
+        gravity_m_s2 = 9.81  # approximate gravitational acceleration near Earth
+        best_number = 8.0 * air_density_kg_m3 * self.mass_kg * gravity_m_s2 / (pi * dynamic_viscosity_pa_s**2)
+        x = 4.0 * sqrt(best_number) / (delta_0**2 * sqrt(c_0))
+        reynolds_number = (delta_0**2 / 4.0) * (x / (sqrt(1.0 + x) + 1.0))**2
+        if reynolds_number >= 1e4:  # upper Reynolds-number range discussed for this sphere fit
+            raise ValueError("Drop is outside the Reynolds-number range of the sphere approximation.")
+        return dynamic_viscosity_pa_s * reynolds_number / (air_density_kg_m3 * diameter_m)
+
+
+@dataclass
+class Environment:  # this is the enviroment where the cloud exsits in
+    cloud_base_height_m: float
+    ground_height_m: float
     top_height_m: float 
     reference_height_m: float     # where the cloud may start
     reference_temperature_k: float      # the temp at the ref height 
     lapse_rate_k_per_m: float = 0.0055  # taken from yang et al paper
     relative_humidity_water: float = 1.0  # our assumption: 100% relative to liquid water
 
+    def __post_init__(self):
+        if not all(isfinite(v) for v in vars(self).values()):
+            raise ValueError("Environment settings must be finite.")
+        if not self.ground_height_m <= self.cloud_base_height_m < self.top_height_m:
+            raise ValueError("Need ground <= cloud base < cloud top.")
+        if self.lapse_rate_k_per_m < 0.0:
+            raise ValueError("This simple model supports constant temperature or warming downward.")
+        if self.relative_humidity_water < 0.0:
+            raise ValueError("Relative humidity cannot be negative.")
 
     def temperature_k(self, height_m: float) -> float:
-        if not self.bottom_height_m <= height_m <= self.top_height_m:
+        if not self.ground_height_m <= height_m <= self.top_height_m:
             raise ValueError("Height is outside the environment.")
 
         # returns the temp at any given height
@@ -156,6 +197,201 @@ class Environment:  # this is the enviroment where the cloud exsits in
         return self.relative_humidity_water * saturation_pressure
 
 
+def simulate_crystal(
+    crystal: IceCrystal,
+    environment: Environment,
+    duration_s: float,
+    air_density_kg_m3: float = 1.0,
+    dynamic_viscosity_pa_s: float = 1.65e-5,
+):
+    # one spherical crystal growing and falling in still air
+    # air density and viscosity are fixed example values for now, as above
+    # temperature and vapor pressure are sampled again at every trial height
+    if not isfinite(duration_s) or duration_s <= 0.0:
+        raise ValueError("Duration must be positive and finite.")
+    if not environment.cloud_base_height_m < crystal.height_m <= environment.top_height_m:
+        raise ValueError("Start the crystal above the cloud bottom and inside the cloud.")
+    if not isfinite(crystal.mass_kg) or crystal.mass_kg <= 0.0:
+        raise ValueError("Start with a positive, finite ice mass.")
+    crystal.terminal_velocity_m_s(air_density_kg_m3, dynamic_viscosity_pa_s)
+
+    # preserve the starting sphere's density as it grows (our example uses 910 kg/m^3)
+    ice_density_kg_m3 = crystal.mass_kg / crystal.volume_m3()
+    vapor_gas_constant = 461.5  # R_v, J/(kg K), same as our growth calculation
+    # only the cloud must be cold; below-cloud melting is handled by simulate_to_ground
+    # 123 K is the water saturation fit's lower limit; 273.15 K is 0 C
+    for height in (environment.cloud_base_height_m, environment.top_height_m):
+        if not 123.0 < environment.temperature_k(height) <= 273.15:
+            raise ValueError("This ice cloud needs 123 < temperature <= 273.15 K throughout.")
+
+    def growth_and_fall_ode(time_s, state):
+        mass_kg, height_m = state
+        # RK45 may try a point past complete sublimation before locating the event
+        if mass_kg <= 0.0:
+            return [0.0, 0.0]
+        radius_m = (3.0 * mass_kg / (4.0 * pi * ice_density_kg_m3)) ** (1.0 / 3.0)
+        trial_crystal = replace(
+            crystal, mass_kg=mass_kg, height_m=height_m, a_m=radius_m, c_m=radius_m,
+        )
+
+        # the solver can also trial a point below the bottom before finding the crossing
+        # use boundary conditions there; the bottom event ends the actual trajectory
+        sample_height = min(environment.top_height_m, max(environment.cloud_base_height_m, height_m))
+        temperature = environment.temperature_k(sample_height)
+        saturation_pressure = saturation_vapor_pressure_ice_pa(temperature)
+        saturation_ratio = environment.vapor_pressure_pa(sample_height) / saturation_pressure
+        saturation_density = saturation_pressure / (vapor_gas_constant * temperature)
+
+        growth_rate = trial_crystal.mass_growth_rate_kg_s(
+            temperature, saturation_ratio, saturation_density,
+        )
+        fall_speed = trial_crystal.terminal_velocity_m_s(
+            air_density_kg_m3, dynamic_viscosity_pa_s,
+        )
+        # dz/dt = -V_t: height increases upward, and we assume no vertical air motion
+        return [growth_rate, -fall_speed]
+
+    def cloud_bottom(time_s, state):
+        return state[1] - environment.cloud_base_height_m
+
+    cloud_bottom.terminal = True  # stop integration at the crossing
+    cloud_bottom.direction = -1  # only crossings from above to below
+
+    def ice_gone(time_s, state):
+        return state[0]
+
+    ice_gone.terminal = True
+    ice_gone.direction = -1
+
+    solution = solve_ivp(
+        growth_and_fall_ode,
+        t_span=(0.0, duration_s),
+        y0=[crystal.mass_kg, crystal.height_m],
+        method="RK45",
+        events=[cloud_bottom, ice_gone],
+        dense_output=True,  # lets us sample the trajectory at chosen times afterwards
+        rtol=1e-7,  # numerical accuracy setting, not a physical constant
+        atol=[1e-22, 1e-6],  # absolute error scales: tiny mass in kg, height in metres
+    )
+    if not solution.success:
+        raise RuntimeError(solution.message)
+    return solution
+
+
+@dataclass
+class ParticleTrajectory:
+    time_s: list[float]
+    height_m: list[float]
+    mass_kg: list[float]
+    phase: list[str]  # "ice", "liquid", or "gone"
+    stop_reason: str
+    cloud_exit_time_s: float | None = None
+    melting_time_s: float | None = None
+
+
+def simulate_to_ground(
+    crystal: IceCrystal,
+    environment: Environment,
+    duration_s: float,
+    air_density_kg_m3: float = 1.0,
+    dynamic_viscosity_pa_s: float = 1.65e-5,
+    sample_interval_s: float = 10.0,
+) -> ParticleTrajectory:
+    # our extension: below cloud, no growth, sublimation or evaporation
+    # melting is instantaneous at 0 C with mass conserved; this is NOT a Yang melting model
+    # the lapse profile warms downward, so there is no refreezing stage
+    if not isfinite(sample_interval_s) or sample_interval_s <= 0.0:
+        raise ValueError("Sample interval must be positive and finite.")
+    result = ParticleTrajectory([], [], [], [], "time_limit")
+
+    def record_segment(solution, phase):
+        # include every stage endpoint exactly, even between regular output samples
+        times = list(np.arange(solution.t[0], solution.t[-1], sample_interval_s))
+        times.append(float(solution.t[-1]))
+        for time_s in times:
+            mass_kg, height_m = solution.sol(time_s)
+            # shared endpoints appear once, with the phase after the transition
+            if result.time_s and time_s == result.time_s[-1]:
+                result.phase[-1] = phase
+                continue
+            result.time_s.append(float(time_s))
+            result.height_m.append(float(height_m))
+            result.mass_kg.append(float(mass_kg))
+            result.phase.append(phase)
+
+    cloud = simulate_crystal(crystal, environment, duration_s, air_density_kg_m3, dynamic_viscosity_pa_s)
+    record_segment(cloud, "ice")
+    if cloud.t_events[1].size:
+        result.mass_kg[-1] = 0.0  # remove root-finding roundoff at complete sublimation
+        result.phase[-1] = "gone"
+        result.stop_reason = "sublimated"
+        return result
+    if not cloud.t_events[0].size:
+        return result
+
+    time_s = float(cloud.t[-1])
+    result.cloud_exit_time_s = time_s
+    mass_kg = float(cloud.y[0, -1])
+    height_m = environment.cloud_base_height_m
+    result.height_m[-1] = height_m
+    ice_density = crystal.mass_kg / crystal.volume_m3()
+    radius_m = (3.0 * mass_kg / (4.0 * pi * ice_density)) ** (1.0 / 3.0)
+    phase = "ice"
+    if environment.temperature_k(height_m) >= 273.15:
+        phase = "liquid"
+        result.melting_time_s = time_s
+        result.phase[-1] = phase
+    if height_m == environment.ground_height_m:
+        result.stop_reason = "ground"
+        return result
+
+    def ground(time_s, state):
+        return state[1] - environment.ground_height_m
+
+    ground.terminal, ground.direction = True, -1
+
+    def melting(time_s, state):
+        # same linear temperature profile, extended for trial steps past the ground
+        # events locate the crossing before we accept any out-of-domain trajectory
+        return (environment.reference_temperature_k
+                - (state[1] - environment.reference_height_m) * environment.lapse_rate_k_per_m
+                - 273.15)
+
+    melting.terminal, melting.direction = True, 1  # warming through 0 C
+
+    while time_s < duration_s:
+        if phase == "ice":
+            particle = replace(crystal, mass_kg=mass_kg, height_m=height_m, a_m=radius_m, c_m=radius_m)
+        else:
+            particle = RainDrop(height_m, mass_kg)  # same mass; liquid density gives its new radius
+        fall_speed = particle.terminal_velocity_m_s(air_density_kg_m3, dynamic_viscosity_pa_s)
+        # constant mass and air properties make the speed constant within each descent stage
+        descent = solve_ivp(
+            lambda t, state: [0.0, -fall_speed],
+            (time_s, duration_s), [mass_kg, height_m],
+            method="RK45", events=[ground, melting] if phase == "ice" else [ground],
+            dense_output=True, rtol=1e-7, atol=[1e-22, 1e-6],
+        )
+        if not descent.success:
+            raise RuntimeError(descent.message)
+        record_segment(descent, phase)
+        time_s, height_m = float(descent.t[-1]), float(descent.y[1, -1])
+        if descent.t_events[0].size:
+            result.height_m[-1] = environment.ground_height_m
+            # also handle a 0 C crossing exactly at the ground
+            if phase == "ice" and environment.temperature_k(environment.ground_height_m) >= 273.15:
+                result.phase[-1] = "liquid"
+                result.melting_time_s = time_s
+            result.stop_reason = "ground"
+            return result
+        if phase == "ice" and descent.t_events[1].size:
+            phase = "liquid"
+            result.phase[-1] = phase
+            result.melting_time_s = time_s
+        else:
+            break  # time limit; the clock is shared across all stages
+    return result
+
 
 if __name__ == "__main__":
     radius_m = 4e-6
@@ -170,7 +406,8 @@ if __name__ == "__main__":
         c_m=radius_m,
     )
     environment = Environment(
-        bottom_height_m=2000.0,
+        cloud_base_height_m=2000.0,
+        ground_height_m=0.0,
         top_height_m=4000.0,
         reference_height_m=3000.0,
         reference_temperature_k=258.15,  # −15°C
@@ -277,3 +514,14 @@ if __name__ == "__main__":
     relative_error = abs(solution.y[0] - exact_mass_kg) / exact_mass_kg
 
     print("Largest relative mass error:", max(relative_error))
+
+    # separate run: the analytic comparison above only applies to fixed conditions
+    # 7200 s (two hours) is our chosen demo limit; 600 s is just the print interval
+    trajectory = simulate_to_ground(crystal, environment, duration_s=7200.0, sample_interval_s=600.0)
+    print("\nCloud to ground (fixed example air density and viscosity):")
+    for time_s, height_m, mass_kg, phase in zip(
+        trajectory.time_s, trajectory.height_m, trajectory.mass_kg, trajectory.phase,
+    ):
+        temperature_c = environment.temperature_k(height_m) - 273.15
+        print(f"{time_s:7.1f} s: {height_m:8.2f} m, {mass_kg:.6e} kg, {temperature_c:.2f} C, {phase}")
+    print("Stopped:", trajectory.stop_reason)
