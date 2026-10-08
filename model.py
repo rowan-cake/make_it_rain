@@ -1,17 +1,45 @@
 from dataclasses import dataclass, replace
-from math import pi, exp, log
+from math import pi, exp, log, tanh, sqrt, isclose, isfinite
 from scipy.integrate import solve_ivp
 
 
 def saturation_vapor_pressure_ice_pa(temperature_k: float) -> float:
     # Murphy-Koop saturation pressure over ice, in Pa.
-    # This is the S_i they speak of in section 2.2 yang et al
+    # these are published fit coefficients from Murphy-Koop (2005), eq (7)
+    # input is kelvin, output is pascals; log is the natural logarithm
+    # this gives e_si(T), not S_i; S_i = actual vapor pressure / e_si(T)
     T = temperature_k
     return exp(
         9.550426
         - 5723.265 / T
         + 3.53068 * log(T)
         - 0.00728332 * T
+    )
+
+
+def saturation_vapor_pressure_water_pa(temperature_k: float) -> float:
+    # Murphy-Koop (2005), eq (10): saturation pressure over liquid water
+    # source (formula 11): https://www.eol.ucar.edu/data-software/conventions-and-standards/water-vapor-pressure-formulations
+    # the numbers are published fit coefficients, not cloud settings we chose
+    # they approximate vapor-pressure calculations based on thermodynamics and
+    # heat-capacity data, using 1/T, log(T), and T terms
+    # input must be kelvin; the fit gives ln(pressure in Pa), so we use exp()
+    # published fit range: 123 < T < 332 K, including supercooled liquid water
+    T = temperature_k
+
+    return exp(
+        54.842763
+        - 6763.22 / T
+        - 4.21 * log(T)
+        + 0.000367 * T
+        # tanh smoothly joins the low- and high-temperature fits
+        # 218.8 K sets the transition centre; 0.0415 per K sets its steepness
+        + tanh(0.0415 * (T - 218.8)) * (
+            53.878
+            - 1331.22 / T
+            - 9.44523 * log(T)
+            + 0.014025 * T
+        )
     )
 
 @dataclass
@@ -24,6 +52,47 @@ class IceCrystal:
 
     def volume_m3(self)->float:
         return (4.0 / 3.0) * pi * self.a_m**2 * self.c_m
+
+    def terminal_velocity_m_s(
+        self,
+        air_density_kg_m3: float,
+        dynamic_viscosity_pa_s: float,
+    ) -> float:
+        # yang section 2.3, eq (22): V_t = eta * Re / (rho_air * D)
+        # positive means falling relative to the air, in m/s
+        # this version is for our sphere; plates/columns need their own geometry
+        values = (self.a_m, self.c_m, air_density_kg_m3, dynamic_viscosity_pa_s)
+        if any(not isfinite(value) or value <= 0.0 for value in values):
+            raise ValueError("Radii, air density and viscosity must be positive and finite.")
+        if not isfinite(self.mass_kg) or self.mass_kg < 0.0:
+            raise ValueError("Mass must be nonnegative and finite.")
+        if not isclose(self.a_m, self.c_m, rel_tol=1e-9, abs_tol=0.0):
+            raise ValueError("Terminal velocity currently assumes a spherical crystal.")
+
+        diameter_m = 2.0 * self.a_m  # sphere diameter D = 2r
+        area_ratio = 1.0  # eq (25): sphere's projected disk fills its outer circle
+        gravity_m_s2 = 9.81  # approximate gravitational acceleration near Earth
+        delta_0 = 8.0  # dimensionless drag-fit constants from Heymsfield-Westbrook (2010)
+        c_0 = 0.35
+        k = 0.5  # their fitted exponent; HW uses A_r^(1-k), also 0.5 here
+
+        # Heymsfield-Westbrook (2010), section 4, eq (8) and steps on p. 2478
+        # https://doi.org/10.1175/2010JAS3379.1
+        # this is the method yang cites; printed yang eqs (23)-(24) differ
+        # we follow HW here; we haven't verified yang's restricted source code
+        # X* = 8 * rho_air * m * g / (pi * eta^2 * A_r^(1-k))
+        # 8/pi comes from the drag balance and circular area, not a fitted number
+        best_number = (
+            air_density_kg_m3 / dynamic_viscosity_pa_s**2
+            * (8.0 * self.mass_kg * gravity_m_s2 / (pi * area_ratio**(1.0 - k)))
+        )
+
+        # HW: Re = (delta_0^2 / 4) * (sqrt(1 + x) - 1)^2
+        # x/(sqrt(1+x)+1) is the same as sqrt(1+x)-1, but more accurate for tiny ice
+        x = 4.0 * sqrt(best_number) / (delta_0**2 * sqrt(c_0))
+        reynolds_number = (delta_0**2 / 4.0) * (x / (sqrt(1.0 + x) + 1.0))**2
+
+        return dynamic_viscosity_pa_s * reynolds_number / (air_density_kg_m3 * diameter_m)
 
     def mass_growth_rate_kg_s(
         self,temperature_k: float,
@@ -64,6 +133,7 @@ class Environment:  # this is the enviroment where the cloud exsits in
     reference_height_m: float     # where the cloud may start
     reference_temperature_k: float      # the temp at the ref height 
     lapse_rate_k_per_m: float = 0.0055  # taken from yang et al paper
+    relative_humidity_water: float = 1.0  # our assumption: 100% relative to liquid water
 
 
     def temperature_k(self, height_m: float) -> float:
@@ -76,6 +146,14 @@ class Environment:  # this is the enviroment where the cloud exsits in
         - (height_m - self.reference_height_m)
         * self.lapse_rate_k_per_m
         )
+
+    def vapor_pressure_pa(self, height_m: float) -> float:
+        # actual vapor pressure = relative humidity * saturation pressure over water
+        # 1.0 means 100%, 0.9 means 90%; this is a ratio, not a percentage input
+        # the profile varies with height, but we don't deplete moisture over time yet
+        temperature = self.temperature_k(height_m)
+        saturation_pressure = saturation_vapor_pressure_water_pa(temperature)
+        return self.relative_humidity_water * saturation_pressure
 
 
 
@@ -103,7 +181,7 @@ if __name__ == "__main__":
     temperature_k = environment.temperature_k(crystal.height_m)
     saturation_pressure_pa = saturation_vapor_pressure_ice_pa(temperature_k)
 
-    actual_vapor_pressure_pa = 182.0  # Temporary example value
+    actual_vapor_pressure_pa = environment.vapor_pressure_pa(crystal.height_m)
     ice_saturation_ratio = actual_vapor_pressure_pa / saturation_pressure_pa
 
     vapor_gas_constant = 461.5  # J / (kg K)
@@ -134,6 +212,14 @@ if __name__ == "__main__":
 
     print("Volume:", crystal.volume_m3(), "m³")
     print("Mass:", crystal.mass_kg, "kg")
+
+    # example air properties only, not yet calculated from our environment
+    # 1.0 kg/m^3 is a rounded air density; 1.65e-5 Pa s approximates cold-air viscosity
+    fall_speed = crystal.terminal_velocity_m_s(
+        air_density_kg_m3=1.0,
+        dynamic_viscosity_pa_s=1.65e-5,
+    )
+    print("Initial terminal fall speed (example air):", fall_speed, "m/s")
 
     def growth_ode(time_s, state):
         # scipy gives us a trial mass; calculate its matching radius
