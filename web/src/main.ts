@@ -1,6 +1,10 @@
 import './style.css';
+import './technology';
+import { renderEquations, renderProvenance } from './methodology';
 import { drawFairy, fairyDurationSeconds, fairyStage } from './fairy';
 import { sampleBurst, samplePopulation, type SeedingBurst, type SimulationData, type Trajectory } from './trajectory';
+
+renderEquations();
 
 // These are drawing settings, not inputs to the Python model yet.
 const scene = {
@@ -44,6 +48,7 @@ const readout = document.querySelector<HTMLOutputElement>('#readout')!;
 const status = document.querySelector<HTMLParagraphElement>('#status')!;
 const waterMass = document.querySelector<HTMLOutputElement>('#water-mass')!;
 const seed = document.querySelector<HTMLButtonElement>('#seed')!;
+const seedLabel = seed.querySelector<HTMLSpanElement>('.seed-label')!;
 const seedInfo = document.querySelector<HTMLParagraphElement>('#seed-info')!;
 const seededWater = document.querySelector<HTMLOutputElement>('#seeded-water')!;
 
@@ -82,7 +87,7 @@ fairyImage.src = `${import.meta.env.BASE_URL}images/angel.png`;
 
 function updateSeedButton() {
   seed.disabled = !seedingBurst?.crystal_count || !fairyImageSettled || fairyStartTime !== null;
-  seed.textContent = fairyStartTime === null ? 'Make rainwater abundant' :
+  seedLabel.textContent = fairyStartTime === null ? 'Make rainwater abundant' :
     playing ? fairyStage((simulationTime - fairyStartTime) / playbackSpeed) : 'Angel paused';
 }
 
@@ -180,6 +185,8 @@ function drawScene() {
   ctx.fillText('Horizontal position (visual)', (axisX + axisRight) / 2, axisBottom + 42);
 
   const art = drawCloud(cloudX, cloudTop, cloudWidth, cloudHeight, fontFamily);
+  // Anchor the existing control to the cloud, including after a canvas resize.
+  seed.style.left = `${cloudX + cloudWidth / 2}px`;
 
   if (trajectories.length) {
     const modelTime = initialSimulationTime + simulationTime;
@@ -300,8 +307,9 @@ async function loadSimulation() {
       throw new Error('Missing or unsupported seeding burst. Regenerate the simulation export.');
     }
     seedingBurst = data.seeding_burst;
+    renderProvenance(data);
     const injection = seedingBurst.injection;
-    seedInfo.textContent = `Each click: ${seedingBurst.crystal_count} new crystals at ` +
+    seedInfo.textContent = `Each seeding run: ${seedingBurst.crystal_count} new crystals at ` +
       `${injection.heights_m.map(height => height.toLocaleString()).join(' / ')} m · ` +
       `${injection.agi_concentration_per_m3 / 1e6} AgI/cm³ in ` +
       `${injection.seeded_volume_m3 * 1000} L total, split equally`;
@@ -318,6 +326,8 @@ async function loadSimulation() {
     requestAnimationFrame(animate);
   } catch (error) {
     status.textContent = error instanceof Error ? error.message : 'Could not load the simulation.';
+    document.querySelector('#preset-summary')!.textContent = 'Simulation data could not be loaded. Preset values are unavailable.';
+    document.querySelector('#burst-explanation')!.textContent = 'The exported nucleation calculations are unavailable until the simulation data loads.';
   }
 }
 

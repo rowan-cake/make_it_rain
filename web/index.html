@@ -8,15 +8,32 @@
   </head>
   <body>
     <main>
+      <header class="intro">
+        <p class="eyebrow">A paper → a model → a simulation</p>
+        <p class="lede">This project is a reimplementation of selected equations from Yang et al. (2024) into simulated particle journeys.</p>
+        <a class="paper-link" href="https://acp.copernicus.org/articles/24/13833/2024/acp-24-13833-2024.html" target="_blank" rel="noopener noreferrer">
+          <span>Source paper · Yang et al., 2024 ↗</span>
+          Estimating the concentration of silver iodide needed to detect unambiguous signatures of glaciogenic cloud seeding
+        </a>
+        <nav class="section-nav" aria-label="On this page">
+          <a href="#simulation">Watch the simulation ↓</a>
+          <a href="#data-provenance">See where the data comes from ↓</a>
+          <a href="#equations">Explore the equations ↓</a>
+          <a href="#technology">Technology used ↓</a>
+        </nav>
+      </header>
+      <section id="simulation" aria-label="Cloud simulation">
+      <div class="scene-stage">
+      <button id="seed" disabled><span class="seed-label">Make rainwater abundant</span></button>
       <canvas id="cloud-scene" role="img" aria-label="Twenty background particles follow staggered looping journeys. The seeding button sends an angel over the cloud to sprinkle AgI, then adds a one-time burst of purple particles after it leaves. Asterisks indicate ice and circles indicate liquid. The horizontal axis shows illustrative positions, not physical distances.">
         Twenty particles follow Python-generated trajectories already in progress. Elapsed time and collected water mass start at zero.
       </canvas>
+      </div>
       <div class="dashboard">
         <section class="controls" aria-label="Simulation controls">
           <div class="playback">
             <button id="toggle" disabled>Play</button>
             <button id="restart" disabled>Restart</button>
-            <button id="seed" disabled>Make rainwater abundant</button>
             <span id="speed">280× speed</span>
           </div>
           <output id="readout" aria-live="off">— min · — particles</output>
@@ -31,23 +48,87 @@
         </aside>
       </div>
       <p class="caption">* ice / o liquid · purple: seeded · altitude in metres · particle size exaggerated</p>
-      <p class="attribution">A simplified implementation of the ice nucleation and growth model in
-        <a href="https://acp.copernicus.org/articles/24/13833/2024/acp-24-13833-2024.html" target="_blank" rel="noopener noreferrer">Yang et al. (2024)</a>.
-      </p>
-      <details class="model-note">
-        <summary>How this follows the paper</summary>
-        <ul>
-          <li><strong>Ice formation:</strong> AgI deposition nucleation from
-            <a href="https://acp.copernicus.org/articles/24/13833/2024/acp-24-13833-2024.html#section2.1" target="_blank" rel="noopener noreferrer">Eq. (1)</a>, applied once per injection.</li>
-          <li><strong>Growth:</strong> vapor deposition from
-            <a href="https://acp.copernicus.org/articles/24/13833/2024/acp-24-13833-2024.html#section2.2" target="_blank" rel="noopener noreferrer">Eq. (5)</a>, using spherical crystals and a ventilation factor of 1.</li>
-          <li><strong>Falling:</strong> the Heymsfield–Westbrook method cited in
-            <a href="https://acp.copernicus.org/articles/24/13833/2024/acp-24-13833-2024.html#section2.3" target="_blank" rel="noopener noreferrer">section 2.3</a>, applied to spheres.</li>
+      </section>
+      <section id="data-provenance" class="methodology" aria-labelledby="data-title">
+        <p class="eyebrow">From calculation to canvas</p>
+        <h2 id="data-title">Where the data comes from</h2>
+        <ol class="pipeline">
+          <li><strong>Calculate</strong><code>model.py</code><p>Integrate each crystal’s mass and height with SciPy’s adaptive RK45 solver.</p></li>
+          <li><strong>Save</strong><code>export_simulations.py</code><p>Choose a reproducible preset and export times, heights, masses, phases, and exact transition endpoints.</p></li>
+          <li><strong>Animate</strong><code>cloud.json → trajectory.ts</code><p>Read the saved trajectories and interpolate between samples. The browser replays these calculations.</p></li>
+        </ol>
+        <h3>The preset you are watching</h3>
+        <p id="preset-summary">Loading settings from the simulation data…</p>
+        <div id="preset-settings" class="preset-settings"></div>
+        <h3>How one seeding burst becomes crystals</h3>
+        <p id="burst-explanation">Loading the exported nucleation calculations…</p>
+        <div class="table-scroll" tabindex="0" role="region" aria-label="Nucleation calculations by layer">
+          <table>
+            <caption>Values read from the same JSON file used by the animation. Display values are rounded.</caption>
+            <thead><tr><th scope="col">Height (m)</th><th scope="col">Temperature (K)</th><th scope="col">Ice saturation</th><th scope="col">Fraction activated</th><th scope="col">Expected crystals</th><th scope="col">Whole crystals</th></tr></thead>
+            <tbody id="seeding-layers"></tbody>
+          </table>
+        </div>
+        <p>Background starting heights are distributed between 2,300 and 2,700 m using Python’s random seed 42.
+          Each starts with a 4 µm radius and ice density of 910 kg/m³. Seeded crystals use the same initial sphere.</p>
+        <p>The animation plays at 280× speed. Background journeys loop, with two staggered groups and a 450-minute
+          playback offset. The water counter subtracts arrivals before the scene opens. Each completed angel flight
+          starts one fresh replay of the saved seeding burst; these seeded journeys do not loop. Horizontal placement
+          and the angel are visual choices.</p>
+        <a id="download-data" download href="./data/cloud.json">Download the simulation data (JSON) ↓</a>
+      </section>
+      <section id="equations" class="methodology" aria-labelledby="equations-title">
+        <p class="eyebrow">Behind each particle</p>
+        <h2 id="equations-title">How this simulation works</h2>
+        <p>The equations below describe the calculations used in this implementation, with their sources and
+          assumptions. Each equation includes its LaTeX source. Quantities use SI units unless stated otherwise.</p>
+        <div class="scope-note">
+          <strong>A simplified implementation of selected parts of the paper.</strong>
+          <p>I use deposition nucleation and spherical vapor growth, with still air and prescribed humidity.
+            I omit the paper’s other nucleation modes, changing crystal shapes, riming, turbulence, and radar-detection algorithm.
+            Moisture is not depleted. Below-cloud descent and instantaneous melting are my additions.</p>
+        </div>
+        <div id="equation-list"></div>
+        <noscript><p>Enable JavaScript to view the rendered equations and simulation.</p></noscript>
+      </section>
+      <section id="technology" class="methodology" aria-labelledby="technology-title">
+        <p class="eyebrow">Building the project</p>
+        <h2 id="technology-title">Tech Stack</h2>
+        <ul class="technology-grid" role="list">
+          <li>
+            <div class="technology-art"><canvas id="tech-python" aria-hidden="true"></canvas></div>
+            <h3>Python</h3>
+            <p>Physics and simulation data</p>
+          </li>
+          <li>
+            <div class="technology-art"><canvas id="tech-typescript" aria-hidden="true"></canvas></div>
+            <h3>TypeScript</h3>
+            <p>Animation</p>
+          </li>
+          <li>
+            <div class="technology-art"><canvas id="tech-html" aria-hidden="true"></canvas></div>
+            <h3>HTML</h3>
+            <p>Page structure</p>
+          </li>
+          <li>
+            <div class="technology-art"><canvas id="tech-css" aria-hidden="true"></canvas></div>
+            <h3>CSS</h3>
+            <p>Styling</p>
+          </li>
+          <li>
+            <div class="technology-art"><canvas id="tech-vercel" aria-hidden="true"></canvas></div>
+            <h3>Vercel</h3>
+            <p>Hosting</p>
+          </li>
         </ul>
-        <p>Our simplifications: fixed air properties, still air, no riming or moisture depletion.
-          Below-cloud descent and instant melting at 0°C are our extensions.
-          The animation illustrates a 1D model; radar detection and real-world rainfall enhancement are outside this demo.</p>
-      </details>
+        <p class="caption">Animated ASCII logos by <a href="https://ascii.rest/" target="_blank" rel="noopener noreferrer">ascii.rest ↗</a>.</p>
+        <div class="project-code">
+          <h3>Explore the code</h3>
+          <p>You can find the code for this project on my GitHub.</p>
+          <a href="https://github.com/rowan-cake/rainmaker" target="_blank" rel="noopener noreferrer">rowan-cake / rainmaker ↗</a>
+        </div>
+        <p class="caption">Shoutout to codex for making this possible. Pls hire me @Rainmaker</p>
+      </section>
     </main>
     <script type="module" src="/src/main.ts"></script>
   </body>

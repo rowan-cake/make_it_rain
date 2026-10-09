@@ -39,6 +39,15 @@ export interface SeedingBurst {
     seeded_volume_m3: number;
   };
   crystal_count: number;
+  agi_particle_count: number;
+  layers: {
+    injection: { height_m: number };
+    temperature_k: number;
+    ice_saturation_ratio: number;
+    nucleation_fraction: number;
+    expected_crystal_count: number;
+    crystal_count: number;
+  }[];
   time_reference: 'seconds_since_injection';
   repeat: false;
   particles: Trajectory[];
@@ -68,6 +77,16 @@ export interface SimulationData {
     ground_height_m: number;
     cloud_base_height_m: number;
     top_height_m: number;
+    reference_height_m: number;
+    reference_temperature_k: number;
+    lapse_rate_k_per_m: number;
+    relative_humidity_water: number;
+  };
+  simulation: {
+    duration_s: number;
+    sample_interval_s: number;
+    air_density_kg_m3: number;
+    dynamic_viscosity_pa_s: number;
   };
   particles: Trajectory[];
   seeding_burst: SeedingBurst;

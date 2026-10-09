@@ -70,7 +70,8 @@ class ParticleJourneyTests(unittest.TestCase):
         self.assertEqual(at_base.cloud_exit_time_s, at_base.melting_time_s)
         self.assertEqual(at_base.stop_reason, "ground")
         at_ground = simulate_to_ground(self.ice, replace(self.env, ground_height_m=freezing_height), 7200)
-        self.assertEqual(at_ground.melting_time_s, at_ground.time_s[-1])
+        # Separate solver events can differ by floating-point roundoff.
+        self.assertAlmostEqual(at_ground.melting_time_s, at_ground.time_s[-1], places=7)
         self.assertEqual(at_ground.phase[-1], "liquid")
         no_descent = simulate_to_ground(self.ice, replace(self.env, ground_height_m=2000), 7200)
         self.assertEqual(no_descent.stop_reason, "ground")
