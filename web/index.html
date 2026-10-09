@@ -8,8 +8,11 @@
   </head>
   <body>
     <main>
-      <header class="dashboard">
-        <div>
+      <canvas id="cloud-scene" role="img" aria-label="Twenty background particles follow staggered looping journeys. The seeding button sends an angel over the cloud to sprinkle AgI, then adds a one-time burst of purple particles after it leaves. Asterisks indicate ice and circles indicate liquid. The horizontal axis shows illustrative positions, not physical distances.">
+        Twenty particles follow Python-generated trajectories already in progress. Elapsed time and collected water mass start at zero.
+      </canvas>
+      <div class="dashboard">
+        <section class="controls" aria-label="Simulation controls">
           <div class="playback">
             <button id="toggle" disabled>Play</button>
             <button id="restart" disabled>Restart</button>
@@ -19,18 +22,32 @@
           <output id="readout" aria-live="off">— min · — particles</output>
           <p id="status" role="status">Loading crystals…</p>
           <p id="seed-info" class="caption"></p>
-        </div>
+        </section>
         <aside class="water-counter" aria-label="Accumulated liquid water at ground">
           <span>Water mass</span>
           <output id="water-mass" aria-live="off">0.00 µg</output>
           <small>At ground since start</small>
           <output id="seeded-water" aria-live="off">0.00 µg from seeded crystals</output>
         </aside>
-      </header>
-      <canvas id="cloud-scene" role="img" aria-label="Twenty background particles follow staggered looping journeys. The seeding button sends an angel over the cloud to sprinkle AgI, then adds a one-time burst of purple particles after it leaves. Asterisks indicate ice and circles indicate liquid. The horizontal axis shows illustrative positions, not physical distances.">
-        Twenty particles follow Python-generated trajectories already in progress. Elapsed time and collected water mass start at zero.
-      </canvas>
+      </div>
       <p class="caption">* ice / o liquid · purple: seeded · altitude in metres · particle size exaggerated</p>
+      <p class="attribution">A simplified implementation of the ice nucleation and growth model in
+        <a href="https://acp.copernicus.org/articles/24/13833/2024/acp-24-13833-2024.html" target="_blank" rel="noopener noreferrer">Yang et al. (2024)</a>.
+      </p>
+      <details class="model-note">
+        <summary>How this follows the paper</summary>
+        <ul>
+          <li><strong>Ice formation:</strong> AgI deposition nucleation from
+            <a href="https://acp.copernicus.org/articles/24/13833/2024/acp-24-13833-2024.html#section2.1" target="_blank" rel="noopener noreferrer">Eq. (1)</a>, applied once per injection.</li>
+          <li><strong>Growth:</strong> vapor deposition from
+            <a href="https://acp.copernicus.org/articles/24/13833/2024/acp-24-13833-2024.html#section2.2" target="_blank" rel="noopener noreferrer">Eq. (5)</a>, using spherical crystals and a ventilation factor of 1.</li>
+          <li><strong>Falling:</strong> the Heymsfield–Westbrook method cited in
+            <a href="https://acp.copernicus.org/articles/24/13833/2024/acp-24-13833-2024.html#section2.3" target="_blank" rel="noopener noreferrer">section 2.3</a>, applied to spheres.</li>
+        </ul>
+        <p>Our simplifications: fixed air properties, still air, no riming or moisture depletion.
+          Below-cloud descent and instant melting at 0°C are our extensions.
+          The animation illustrates a 1D model; radar detection and real-world rainfall enhancement are outside this demo.</p>
+      </details>
     </main>
     <script type="module" src="/src/main.ts"></script>
   </body>

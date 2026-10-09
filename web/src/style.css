@@ -13,7 +13,7 @@ body { margin: 0; }
 main {
   width: min(100%, 1000px);
   margin: 0 auto;
-  padding: 64px 24px 32px;
+  padding: 24px 24px 32px;
 }
 
 h1 {
@@ -30,14 +30,21 @@ canvas {
   display: block;
   width: 100%;
   height: calc(clamp(600px, 80vh, 800px) + var(--sky-height));
-  margin-top: 32px;
   border-top: 1px solid #2b3835;
   border-bottom: 1px solid #2b3835;
 }
 
 .caption { font-size: 11px; }
 
-.dashboard { display: flex; justify-content: space-between; gap: 24px; flex-wrap: wrap; }
+.attribution { max-width: 440px; margin: 0; }
+a { color: #dbe5de; text-underline-offset: 3px; }
+a:hover { color: #d8b4fe; }
+.model-note { margin-top: 24px; border-top: 1px solid #2b3835; padding-top: 16px; font-size: 12px; }
+.model-note summary { cursor: pointer; }
+.model-note ul { padding-left: 20px; line-height: 1.8; }
+.model-note p { max-width: 740px; font-size: 12px; }
+
+.dashboard { margin-top: 24px; display: flex; justify-content: space-between; gap: 24px; flex-wrap: wrap; }
 .water-counter { margin-left: auto; text-align: right; }
 .water-counter span, .water-counter small { display: block; color: #91a39a; font-size: 12px; }
 .water-counter output { display: block; margin: 10px 0; color: #ffc58a; font-size: 24px; }
@@ -61,7 +68,7 @@ button:hover:not(:disabled) { background: #24332e; }
 button:disabled { opacity: 0.4; cursor: default; }
 
 @media (max-width: 600px) {
-  main { padding: 32px 16px; }
+  main { padding: 16px; }
   /* Keep the full cloud altitude band inside its proportional artwork on phones. */
   canvas {
     --sky-height: 140px;
