@@ -156,8 +156,10 @@ td:last-child { color: #d8b4fe; }
 }
 #seed:hover:not(:disabled) {
   background: transparent;
+}
+#seed:hover:not(:disabled) .seed-label {
   color: #fff5d8;
-  filter: drop-shadow(0 0 6px #f5e4b930);
+  text-shadow: 0 0 6px #f5e4b9aa, 0 0 12px #f5e4b960;
 }
 #seed:disabled { opacity: 0.65; }
 
